@@ -1,5 +1,6 @@
 'use client';
 
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
 import { cn } from '@/shared/lib/utils';
@@ -8,11 +9,118 @@ import {
   BlankTile,
   celebrationBounceVariants,
   celebrationContainerVariants,
-  celebrationExplodeContainerVariants,
-  celebrationExplodeVariants,
   tileContainerVariants,
   tileEntryVariants,
 } from '@/shared/components/Game/tilesModeShared';
+import {
+  celebrationExplodeContainerVariants,
+  explosionKeyframes,
+} from '@/shared/components/Game/tilesModeCelebration';
+
+type AnimState = 'idle' | 'exploding' | 'hidden' | 'fading-in';
+
+const ExplodingAnswerTile = memo(
+  ({
+    id,
+    char,
+    onTileClick,
+    isTileDisabled,
+    tileSizeClassName,
+    tileLang,
+    celebrationToken,
+    isCelebrating,
+  }: {
+    id: number;
+    char: string;
+    onTileClick: (id: number, char: string) => void;
+    isTileDisabled: boolean;
+    tileSizeClassName: string;
+    tileLang?: string;
+    celebrationToken: string;
+    isCelebrating: boolean;
+  }) => {
+    const [animState, setAnimState] = useState<AnimState>('idle');
+    const isAnimating = useRef(false);
+    const timersRef = useRef<number[]>([]);
+    const previousTokenRef = useRef(celebrationToken);
+
+    useEffect(() => {
+      return () => {
+        timersRef.current.forEach(timer => window.clearTimeout(timer));
+      };
+    }, []);
+
+    useEffect(() => {
+      if (!isCelebrating && !isAnimating.current) {
+        setAnimState('idle');
+      }
+    }, [isCelebrating]);
+
+    useEffect(() => {
+      if (previousTokenRef.current === celebrationToken) return;
+      previousTokenRef.current = celebrationToken;
+      if (!isAnimating.current) return;
+      isAnimating.current = false;
+      timersRef.current.forEach(timer => window.clearTimeout(timer));
+      timersRef.current = [];
+      setAnimState('idle');
+    }, [celebrationToken]);
+
+    useEffect(() => {
+      if (!celebrationToken.endsWith('-true')) return;
+      if (isAnimating.current) return;
+      isAnimating.current = true;
+      setAnimState('exploding');
+      timersRef.current.push(
+        window.setTimeout(() => {
+          setAnimState('hidden');
+          timersRef.current.push(
+            window.setTimeout(() => {
+              setAnimState('fading-in');
+              timersRef.current.push(
+                window.setTimeout(() => {
+                  setAnimState('idle');
+                  isAnimating.current = false;
+                }, 500),
+              );
+            }, 1500),
+          );
+        }, 300),
+      );
+    }, [celebrationToken]);
+
+    const getAnimationStyle = (): React.CSSProperties => {
+      switch (animState) {
+        case 'exploding':
+          return { animation: 'explode 300ms ease-out forwards' };
+        case 'hidden':
+          return { opacity: 0 };
+        case 'fading-in':
+          return { animation: 'fadeIn 500ms ease-in forwards' };
+        default:
+          return {};
+      }
+    };
+
+    return (
+      <ActiveTile
+        id={id}
+        char={char}
+        layoutId={`tile-${id}-${char}`}
+        onClick={() => onTileClick(id, char)}
+        isDisabled={isTileDisabled || animState !== 'idle'}
+        sizeClassName={tileSizeClassName}
+        lang={tileLang}
+        motionStyle={{
+          transformOrigin: 'center center',
+          ...getAnimationStyle(),
+        }}
+      />
+    );
+  },
+);
+
+ExplodingAnswerTile.displayName = 'ExplodingAnswerTile';
 
 interface TilesModeGridProps {
   allTiles: Map<number, string>;
@@ -43,14 +151,11 @@ const TilesModeGrid = ({
   tilesContainerClassName,
   tilesWrapperKey,
 }: TilesModeGridProps) => {
+  const styleTag = useMemo(() => explosionKeyframes, []);
   const celebrationContainerVariantsToUse =
     celebrationMode === 'explode'
       ? celebrationExplodeContainerVariants
       : celebrationContainerVariants;
-  const celebrationTileVariantsToUse =
-    celebrationMode === 'explode'
-      ? celebrationExplodeVariants
-      : celebrationBounceVariants;
 
   const tileEntries = Array.from(allTiles.entries());
   const topRowTiles = tileEntries.slice(0, tilesPerRow);
@@ -95,6 +200,7 @@ const TilesModeGrid = ({
 
   return (
     <>
+      <style>{styleTag}</style>
       <div className='flex w-full flex-col items-center'>
         <div className={clsx(answerRowClassName)}>
           <motion.div
@@ -103,20 +209,34 @@ const TilesModeGrid = ({
             initial='idle'
             animate={isCelebrating ? 'celebrate' : 'idle'}
           >
-            {answerTiles.map(([id, char]) => (
-              <ActiveTile
-                key={`answer-tile-${id}-${char}`}
-                id={id}
-                char={char}
-                layoutId={`tile-${id}-${char}`}
-                onClick={() => onTileClick(id, char)}
-                isDisabled={isTileDisabled}
-                sizeClassName={tileSizeClassName}
-                lang={tileLang}
-                variants={celebrationTileVariantsToUse}
-                motionStyle={{ transformOrigin: '50% 50%' }}
-              />
-            ))}
+            {answerTiles.map(([id, char], index) =>
+              celebrationMode === 'explode' ? (
+                <ExplodingAnswerTile
+                  key={`answer-tile-${id}-${char}`}
+                  id={id}
+                  char={char}
+                  onTileClick={onTileClick}
+                  isTileDisabled={isTileDisabled}
+                  tileSizeClassName={tileSizeClassName}
+                  tileLang={tileLang}
+                  celebrationToken={`${tilesWrapperKey ?? 'tiles'}-${index}-${isCelebrating}`}
+                  isCelebrating={isCelebrating}
+                />
+              ) : (
+                <ActiveTile
+                  key={`answer-tile-${id}-${char}`}
+                  id={id}
+                  char={char}
+                  layoutId={`tile-${id}-${char}`}
+                  onClick={() => onTileClick(id, char)}
+                  isDisabled={isTileDisabled}
+                  sizeClassName={tileSizeClassName}
+                  lang={tileLang}
+                  variants={celebrationBounceVariants}
+                  motionStyle={{ transformOrigin: 'center center' }}
+                />
+              ),
+            )}
           </motion.div>
         </div>
       </div>
